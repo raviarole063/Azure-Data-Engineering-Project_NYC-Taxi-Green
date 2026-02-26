@@ -11,11 +11,12 @@ engineering patterns on the Azure stack.
 
 ## Architecture
 
-NYC TLC Public CDN (parquet / CSV) 
-(https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
-                          │
-                          │  HTTP download via urllib / ADF Copy Activity
-                          ▼
+**Source:** [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
+```
+NYC TLC Public CDN  (parquet / CSV)
+         │
+         │  HTTP download via urllib / ADF Copy Activity
+         ▼
 ┌─────────────────────────────────────────────────────┐
 │  00 · LANDING                                       │
 │  Databricks Volume / ADLS Gen2                      │
@@ -32,7 +33,7 @@ NYC TLC Public CDN (parquet / CSV)
                           ▼
 ┌─────────────────────────────────────────────────────┐
 │  02 · SILVER  —  green_trips_cleansed               │
-│  2025 data only · fare ≥ 0 · disputes removed       │
+│  2025 data only · fare >= 0 · disputes removed      │
 │  Decoded vendor / rate / payment columns            │
 │                                                     │
 │            green_trips_enriched                     │
@@ -49,12 +50,10 @@ NYC TLC Public CDN (parquet / CSV)
 │  total_trips · total_revenue · avg_fare             │
 │  avg_distance · avg_passengers · max/min_fare       │
 └─────────────────────────┬───────────────────────────┘
-                          │ Cleanse + filter
-                          ▼
                           │  DirectQuery
                           ▼
                    Power BI Dashboard
-
+```
 
 ## How It Works
 
