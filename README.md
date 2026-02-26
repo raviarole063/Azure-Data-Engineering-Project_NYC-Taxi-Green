@@ -49,6 +49,13 @@ NYC TLC Public CDN (parquet / CSV)
 │  total_trips · total_revenue · avg_fare             │
 │  avg_distance · avg_passengers · max/min_fare       │
 └─────────────────────────┬───────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│  01 · BRONZE — green_trips_raw                      │
+│  Raw Delta table · load_timestamp · source_file     │
+│  Idempotent via checkpoint                          │
+└─────────────────────────┬───────────────────────────┘
+                          │ Cleanse + filter
+                          ▼
                           │  DirectQuery
                           ▼
                    Power BI Dashboard
