@@ -124,35 +124,36 @@ green_trips_cleansed.py
 
 <databricks_job_dag.png>
 
-The job runs two tracks in parallel then merges:
+The job is triggered by ADF after Copy Activities complete.
+Parameters `p_month_start` and `p_month_end` are passed from the
+ADF pipeline and received in notebooks via `dbutils.widgets`.
 
-**Track A — Green Trips**
-```
-00_ingest_green_trips
-        ↓
-continue_downstream_yellow_taxi  (condition: taskValue == "yes")
-        ↓ true
-01_green_trips_raw
-        ↓
-02_green_trips_cleaned
-        ↓
-02_green_trips_enriched ←─────────────┐
-        ↓                             │
-03_daily_trip_summary          Track B joins here
-```
+Two tracks run in parallel then merge at enrichment:
 
-**Track B — Taxi Zone Lookup**
-```
-00_ingest_lookup
-        ↓
-continue_downstream_lookup  (condition: taskValue == "yes")
-        ↓ true
-02_taxi_zone_lookup ──────────────────┘
+Track A — Green Trips
+  01_green_trips_raw
+          ↓
+  02_silver_trips_cleansed
+  (filters by p_month_start / p_month_end passed from ADF)
+          ↓
+  03_silver_trips_enriched ←──────────────────────┐
+          ↓                                        │
+  04_daily_trips_summary               Track B joins here
+
+Track B — Taxi Zone Lookup (parallel)
+  taxi_zone_lookup (SCD Type-2) ───────────────────┘
 ```
 
-If ingestion finds the file already exists, `continue_downstream` is 
-set to `"no"` and all downstream tasks are automatically skipped. 
-No wasted compute.
+---
+
+### Option B — Separate `docs/adf-orchestration.md`
+
+Keep the main README clean and create:
+```
+nyc-taxi-project/
+  └── docs/
+        ├── adf-orchestration.md     ← full ADF pipeline details
+        └── databricks-job.md        ← job config, params, cluster
 
 ---
 
