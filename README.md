@@ -124,26 +124,24 @@ green_trips_cleansed.py
 
 <databricks_job_dag.png>
 
-The job is triggered by ADF after Copy Activities complete.
-Parameters `p_month_start` and `p_month_end` are passed from the
-ADF pipeline and received in notebooks via `dbutils.widgets`.
+The job is triggered by ADF after Copy Activities complete. Parameters
+`p_month_start` and `p_month_end` are passed from the ADF pipeline and
+received in notebooks via `dbutils.widgets`.
 
 Two tracks run in parallel then merge at enrichment:
-
-Track A — Green Trips
-  01_green_trips_raw
-          ↓
-  02_silver_trips_cleansed
-  (filters by p_month_start / p_month_end passed from ADF)
-          ↓
-  03_silver_trips_enriched ←──────────────────────┐
-          ↓                                        │
-  04_daily_trips_summary               Track B joins here
-
-Track B — Taxi Zone Lookup (parallel)
-  taxi_zone_lookup (SCD Type-2) ───────────────────┘
 ```
-
+Track A — Green Trips          Track B — Taxi Zone Lookup
+──────────────────────         ──────────────────────────
+01_green_trips_raw             taxi_zone_lookup (SCD Type-2)
+        ↓                                  │
+02_silver_trips_cleansed                   │
+(p_month_start / p_month_end               │
+ filter applied here)                      │
+        ↓                                  │
+03_silver_trips_enriched ←─────────────────┘
+        ↓
+04_daily_trips_summary
+```
 ---
 
 ### Option B — Separate `docs/adf-orchestration.md`
