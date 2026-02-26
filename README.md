@@ -61,24 +61,40 @@ NYC TLC Public CDN  (parquet / CSV)
 
 <pipeline_overview.png>
 
-Azure Data Factory runs two Copy Activities in sequence:
+The pipeline accepts two parameters at runtime:
 
-1. **Green Trips Copy** — ForEach loop over months [1–12] for a given 
-   year. Each iteration downloads one parquet file from the NYC TLC CDN 
-   and lands it in ADLS Gen2. Skips months already present in storage. 
-   Silently skips future months that return 404. Zero-pads month numbers 
-   to match URL format (09 not 9).
+| Parameter | Type | Example — Backfill | Example — Incremental |
+|---|---|---|---|
+| `p_month_start` | Integer | 5 (May) | 11 (November) |
+| `p_month_end` | Integer | 10 (October) | 11 (November) |
 
-2. **Taxi Zone Lookup Copy** — Single Copy Activity. Downloads the zone 
-   lookup CSV from NYC TLC and lands it in ADLS.
+**ADF runs three activities in sequence:**
 
-After both Copy Activities complete, ADF fires the Databricks Job via 
-Web Activity (REST API call), which runs the full transformation 
-pipeline.
+**1. Green Trips Copy Activity (ForEach)**
+Loops over every month integer from `p_month_start` to `p_month_end`.
+Each iteration constructs the NYC TLC URL dynamically using the year
+and zero-padded month, downloads the parquet file, and lands it in
+ADLS Gen2 under `/00_landing/nyctaxi_green/{yyyy-MM}/`.
 
-<adf_pipeline_canvas.png>
+Passing `p_month_start=5, p_month_end=10` downloads 6 files.
+Passing `p_month_start=11, p_month_end=11` downloads one file for
+the incremental monthly run.
+
+**2. Taxi Zone Lookup Copy Activity**
+Single Copy Activity — no loop. Downloads the zone lookup CSV from
+the NYC TLC CDN and lands it in `/00_landing/lookup/`. Runs
+independently of the green trips loop.
+
+**3. Databricks Job Trigger (Web Activity)**
+After both Copy Activities complete, ADF calls the Databricks Jobs
+REST API to trigger the transformation job. The pipeline parameters
+`p_month_start` and `p_month_end` are forwarded as notebook
+parameters in the request body.
+
+<adf_web_activity_config.png>
 
 ---
+
 
 ### Databricks Job — Task Dependencies
 
