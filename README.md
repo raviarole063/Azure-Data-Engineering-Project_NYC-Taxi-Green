@@ -132,3 +132,142 @@ target window dynamically at runtime — no hardcoded dates.
 No manual flags. No if/else branching in notebooks. The utility 
 function detects the state of the target table and switches mode 
 automatically.
+
+
+
+## Unity Catalog — Storage Architecture
+
+<unity_catalog_storage.png>
+
+Unity Catalog governs all data access. The catalog `nyctaxi` contains 
+four schemas mapping directly to the Medallion layers.
+
+### Catalog Structure
+```
+nyctaxi (catalog)
+  ├── 00_landing  — External Volume → abfss://landing@...
+  ├── 01_bronze   — External Tables  → abfss://bronze@...
+  ├── 02_silver   — External Tables  → abfss://silver@...
+  └── 03_gold     — Managed Tables   → Metastore root
+```
+
+### External vs Managed Table Strategy
+
+**Bronze and Silver → External Tables**
+Data files live in your own ADLS Gen2 containers. Dropping a table 
+removes the metadata only — the underlying Parquet/Delta files remain 
+safe in storage. Protects against accidental workspace or catalog 
+deletion.
+
+**Gold → Managed Tables**
+Aggregated summary tables are small and easily regenerated from Silver. 
+Databricks manages the storage path. Simplifies access for Power BI.
+
+**Landing → External Volume**
+The landing container is also written to by ADF. Making it an External 
+Volume means Databricks can read from it without owning it — dropping 
+the volume does not delete the raw files ADF deposited.
+
+### SCD Type-2 — Taxi Zone Lookup
+
+<scd_type2_table.png>
+
+`taxi_zone_lookup` is a Slowly Changing Dimension Type-2 table. When a 
+zone attribute changes (borough, zone name, service zone), the existing 
+active record is expired by setting `end_date`, and a new record is 
+inserted with a fresh `effective_date`. Active records always have 
+`end_date IS NULL`. Enrichment joins filter on this condition.
+
+
+## Security — Service Principal Authentication
+
+<service_principal_setup.png>
+
+Storage access uses a **Service Principal** (App Registration) rather 
+than account keys, demonstrating the **Principle of Least Privilege**.
+
+**Flow:**
+```
+Databricks notebook
+        ↓  dbutils.secrets.get(scope, key)
+Azure Key Vault  (kv-nyctaxi-scope)
+        ↓  OAuth token exchange
+Service Principal  (sp-nyctaxi-lakehouse-dev)
+        ↓  Storage Blob Data Contributor role
+ADLS Gen2  (stnyctaxigreen)
+```
+
+Credentials are never hardcoded. The Databricks Secret Scope acts as 
+the bridge between notebooks and Key Vault — even `print(secret)` 
+outputs `[REDACTED]` in notebook output.
+
+Two Access Connectors are used:
+
+| Connector | Permission | Purpose |
+|---|---|---|
+| unity-catalog-access-connector | Metastore container only | Unity Catalog system metadata |
+| nyctaxi-data-access-connector | landing/bronze/silver/gold | Data layer access |
+
+This isolates metastore system files from data processing — a data 
+engineer cannot accidentally delete catalog metadata by touching the 
+data containers.
+
+
+## Data Quality
+
+<data_validation_results.png>
+
+Enforced in the Silver layer via `green_trips_cleansed.py`:
+
+| Check | Rule | Rows Affected |
+|---|---|---|
+| Late-arriving data | `year(pickup) == 2025` | 6 stray 2024 records removed |
+| Negative fares | `fare_amount >= 0` | 1,577 reversals/disputes removed |
+| Invalid payment types | Exclude Dispute, No charge | Ensures avg_fare reflects real rides |
+
+**Idempotency validation** — `data_validation.sql` captures row count 
+before a re-run and confirms zero rows added after. Delta MERGE in 
+`upsert_delta_table()` ensures this holds at the write layer.
+
+**Delta Time Travel** — full version history on Gold table. Can query 
+any prior state with `VERSION AS OF`.
+
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Language | Python, PySpark, SQL |
+| Platform | Azure Databricks (Premium) |
+| Storage | ADLS Gen2 (Medallion containers) |
+| Table Format | Delta Lake |
+| Catalog | Unity Catalog |
+| Ingestion | Auto Loader (cloudFiles) |
+| Orchestration | Databricks Workflows + Azure Data Factory |
+| Security | Azure Key Vault + Service Principal + Secret Scope |
+| Visualisation | Power BI Desktop (DirectQuery) |
+| Version Control | GitHub (Databricks Repos) |
+| IaC | ADF ARM Template export |
+
+
+## Repository Structure
+```
+nyc-taxi-project/
+  ├── transformations/
+  │     └── notebooks/
+  │           ├── 00_landing/          # ingest_green_trips, ingest_lookup
+  │           ├── 01_bronze/           # green_trips_raw (Auto Loader)
+  │           ├── 02_silver/           # cleansed, enriched, taxi_zone_lookup
+  │           └── 03_gold/             # daily_trip_summary
+  ├── modules/
+  │     ├── data_loader/               # file_downloader.py
+  │     ├── transformations/           # metadata.py
+  │     └── utils/                     # date_utils.py, table_utils.py
+  ├── setup/
+  │     └── create_catalog_and_schemas.sql
+  ├── ad_hoc/
+  │     ├── data_validation.sql
+  │     ├── green_taxi_eda.py
+  │     └── purge_tables.py
+  └── adf/                             # ADF ARM template + pipeline JSON
+```
