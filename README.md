@@ -94,7 +94,31 @@ parameters in the request body.
 <adf_web_activity_config.png>
 
 ---
+### Parameter Flow — ADF to Databricks
 
+<adf_pipeline_params.png>
+
+The parameters travel end-to-end from the ADF trigger down to the
+Silver filtering logic:
+```
+ADF Pipeline
+  p_month_start = 11
+  p_month_end   = 11
+        │
+        │  passed in Web Activity body
+        ▼
+Databricks Job
+        │
+        │  received via dbutils.widgets
+        ▼
+green_trips_cleansed.py
+  p_start_month = dbutils.widgets.get("p_start_month")  →  11
+  p_end_month   = dbutils.widgets.get("p_end_month")    →  11
+
+  df_cleansed.filter()
+```
+
+---
 
 ### Databricks Job — Task Dependencies
 
