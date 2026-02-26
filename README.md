@@ -180,6 +180,7 @@ availability and processing is adjustable in `date_utils.py` —
 `get_month_start_n_months_ago(n)` where `n` can be changed to match
 the NYC TLC release schedule.
 
+---
 
 ## Unity Catalog — Storage Architecture
 
@@ -196,24 +197,27 @@ nyctaxi (catalog)
   ├── 02_silver   — External Tables  → abfss://silver@...
   └── 03_gold     — Managed Tables   → Metastore root
 ```
-
-### External vs Managed Table Strategy
+---
+### External vs Managed Table
 
 **Bronze and Silver → External Tables**
-Data files live in your own ADLS Gen2 containers. Dropping a table 
-removes the metadata only — the underlying Parquet/Delta files remain 
+Data files live in ADLS Gen2 containers. Dropping a table 
+removes the metadata only - the underlying Parquet/Delta files remain 
 safe in storage. Protects against accidental workspace or catalog 
 deletion.
 
 **Gold → Managed Tables**
 Aggregated summary tables are small and easily regenerated from Silver. 
-Databricks manages the storage path. Simplifies access for Power BI.
+Databricks manages the storage path. Managed Delta tables benefit from 
+Databricks-optimized features such as optimized writes, and predictive 
+I/O which are applied automatically without manual configuration.
 
 **Landing → External Volume**
 The landing container is also written to by ADF. Making it an External 
-Volume means Databricks can read from it without owning it — dropping 
+Volume means Databricks can read from it without owning it - dropping 
 the volume does not delete the raw files ADF deposited.
 
+---
 ### SCD Type-2 — Taxi Zone Lookup
 
 <scd_type2_table.png>
@@ -224,59 +228,218 @@ active record is expired by setting `end_date`, and a new record is
 inserted with a fresh `effective_date`. Active records always have 
 `end_date IS NULL`. Enrichment joins filter on this condition.
 
+---
 
-## Security — Service Principal Authentication
+## Security & Storage Access
+
+### Unity Catalog Setup
+
+#### Microsoft Entra ID User
+
+Azure Databricks account-level administration does not accept personal
+Microsoft accounts (Gmail, Outlook personal). A dedicated user was
+created in **Microsoft Entra ID** (formerly Azure AD) to serve as the
+Databricks account admin — this is required for Unity Catalog
+governance at the account level.
+
+An admin group was created in the Databricks account console with this
+Entra ID user added as both group member and account admin.
+
+---
+
+#### Metastore Configuration
+
+<metastore_setup.png>
+
+Azure creates one default metastore per region automatically, but it
+has no managed storage path assigned. This means every catalog and
+managed table would require an explicit storage path at creation time.
+
+For this project the default metastore was deleted and a new one
+created with a dedicated storage path:
+
+- A container named `metastore` was created in the project storage
+  account
+- This path was set as the **metastore root storage** — the default
+  location for all managed table data and Unity Catalog metadata
+- The Databricks workspace was then assigned to this metastore
+
+With a root path configured, managed tables (Gold layer) write to this
+container automatically without specifying a path at table creation.
+
+---
+#### Two Access Connectors — Isolation by Design
+
+<access_connector_setup.png>
+
+An **Access Connector** is an Azure-managed identity that acts as the
+bridge between Databricks and ADLS Gen2. Rather than using one
+connector for everything, two were used for isolation:
+
+| Connector | Assigned To | Container Access |
+|---|---|---|
+| `unity-catalog-access-connector` | Metastore | Metastore container only |
+| `nyctaxi-data-access-connector` | Storage Credential | landing, bronze, silver, gold |
+
+**Why two instead of one:**
+The metastore connector handles Unity Catalog system metadata —
+table definitions, schema information, permissions, and managed table
+files. The data connector handles all pipeline data movement.
+
+Separating them means working on Bronze or Silver
+cannot accidentally touch metastore system files. If the data
+connector's permissions are misconfigured or revoked, catalog metadata
+remains intact. This demonstrates **Principle of Least Privilege** at
+the infrastructure level — each identity has access to exactly what
+it needs and nothing more.
+
+Both connectors were assigned **Storage Blob Data Contributor** on
+their respective containers via IAM Role Assignment in Azure Portal.
+
+---
+#### Storage Credential & External Locations
+
+<storage_credential.png>
+
+A **Storage Credential** is the Unity Catalog object that wraps an
+Access Connector and registers it inside Databricks. Once created,
+it can be referenced by External Locations and granted permissions
+to users and groups — all managed centrally through Unity Catalog
+rather than per-notebook configuration.
+```
+Azure Access Connector (nyctaxi-data-access-connector)
+        │  wrapped by
+        ▼
+Storage Credential (nyctaxi-data-storage-credential)
+        │  referenced by
+        ▼
+External Locations
+  ├── abfss://landing@stnyctaxigreen.dfs.core.windows.net/
+  ├── abfss://bronze@stnyctaxigreen.dfs.core.windows.net/
+  ├── abfss://silver@stnyctaxigreen.dfs.core.windows.net/
+  └── abfss://gold@stnyctaxigreen.dfs.core.windows.net/
+```
+
+**External Locations** map specific ADLS paths to the Storage
+Credential. Any notebook or job in the workspace can access these
+paths through Unity Catalog permissions — no credentials in code,
+no authentication blocks in notebooks, no Secret Scopes required.
+
+Permissions can be granted at three levels:
+- On the Storage Credential itself
+- On individual External Locations
+- On catalogs, schemas, and tables built on top of those locations
+
+This gives fine-grained access control entirely within Unity Catalog
+without even touching Azure IAM.
+---
+
+### Alternative Pattern — Service Principal
 
 <service_principal_setup.png>
 
-Storage access uses a **Service Principal** (App Registration) rather 
-than account keys, demonstrating the **Principle of Least Privilege**.
+A Service Principal authentication pattern is also implemented in the
+codebase as a reference, with the authentication block present but
+commented out in notebooks (`green_trips_raw.py`, `taxi_zone_lookup.py`).
 
-**Flow:**
+**Why Service Principal is not the primary approach:**
+
+Unity Catalog Storage Credentials with External Locations is the
+modern Databricks-recommended pattern. Service Principal authentication
+requires credentials to be fetched in every notebook at runtime,
+managed per-workspace, and rotated manually. It also bypasses Unity
+Catalog's centralised governance — access cannot be managed through
+catalog permissions, only through Azure IAM and Key Vault.
+
+**How it is implemented (reference):**
 ```
-Databricks notebook
-        ↓  dbutils.secrets.get(scope, key)
-Azure Key Vault  (kv-nyctaxi-scope)
-        ↓  OAuth token exchange
-Service Principal  (sp-nyctaxi-lakehouse-dev)
-        ↓  Storage Blob Data Contributor role
-ADLS Gen2  (stnyctaxigreen)
+Azure Portal
+  └── App Registration (sp-nyctaxi-lakehouse-dev)
+        └── Client ID + Tenant ID noted
+        └── Client Secret generated (visible once only)
+              │
+              ▼
+        Key Vault (kv-nyctaxi-lake-dev)
+          └── sp-client-id
+          └── sp-tenant-id
+          └── sp-client-secret
+              │
+              ▼
+        Databricks Secret Scope (kv-nyctaxi-scope)
+        linked to Key Vault via Vault URI + Resource ID
+              │
+              ▼
+        Notebook
+          client_secret = dbutils.secrets.get(
+              scope="kv-nyctaxi-scope",
+              key="sp-client-secret"
+          )
+          # print(client_secret) → [REDACTED]
 ```
 
-Credentials are never hardcoded. The Databricks Secret Scope acts as 
-the bridge between notebooks and Key Vault — even `print(secret)` 
-outputs `[REDACTED]` in notebook output.
+The Service Principal was assigned **Storage Blob Data Contributor**
+on the storage account. Credentials are never hardcoded — even
+`print(secret)` outputs `[REDACTED]` in notebook output due to
+Databricks secret redaction.
 
-Two Access Connectors are used:
-
-| Connector | Permission | Purpose |
-|---|---|---|
-| unity-catalog-access-connector | Metastore container only | Unity Catalog system metadata |
-| nyctaxi-data-access-connector | landing/bronze/silver/gold | Data layer access |
-
-This isolates metastore system files from data processing — a data 
-engineer cannot accidentally delete catalog metadata by touching the 
-data containers.
-
+---
 
 ## Data Quality
 
+### Silver Layer — Filtering & Cleansing
+
 <data_validation_results.png>
 
-Enforced in the Silver layer via `green_trips_cleansed.py`:
+Enforced in `green_trips_cleansed.py` before writing to Silver:
 
-| Check | Rule | Rows Affected |
+Example:
+| Check | Rule | Reason |
 |---|---|---|
-| Late-arriving data | `year(pickup) == 2025` | 6 stray 2024 records removed |
-| Negative fares | `fare_amount >= 0` | 1,577 reversals/disputes removed |
-| Invalid payment types | Exclude Dispute, No charge | Ensures avg_fare reflects real rides |
+| Late-arriving data | `year(pickup_datetime) == 2025` | Trips starting Dec 31st bundled into Jan files carry 2024 dates — invalid for 2025 reporting |
+| Negative fare amounts | `fare_amount >= 0` | Negative values represent refunds, dispute reversals, and driver entry corrections — not real commercial trips |
 
-**Idempotency validation** — `data_validation.sql` captures row count 
-before a re-run and confirms zero rows added after. Delta MERGE in 
-`upsert_delta_table()` ensures this holds at the write layer.
+Raw Bronze contains **1,577 negative fare records** and **6 stray 2024
+records**. Without this filter, `avg_fare` and `total_revenue` in Gold
+are mathematically incorrect.
 
-**Delta Time Travel** — full version history on Gold table. Can query 
-any prior state with `VERSION AS OF`.
+---
+
+### Silver Layer — Enrichment
+
+`green_trips_enriched.py` joins `green_trips_cleansed` with
+`taxi_zone_lookup` twice — once for pickup location, once for dropoff —
+replacing raw integer location IDs with human-readable names:
+```
+pu_location_id (integer) → pu_borough, pu_zone  (e.g. Manhattan, JFK)
+do_location_id (integer) → do_borough, do_zone  (e.g. Queens, Astoria)
+```
+
+Both joins use aliased DataFrames (`pu_lookup`, `do_lookup`) to avoid
+column name conflicts on the same lookup table. Only active zone
+records (`end_date IS NULL`) are used — ensures SCD Type-2 history
+does not create duplicate join matches.
+
+---
+
+### Idempotency Validation
+
+<idempotency_check.png>
+
+Validated in `ad_hoc > data_validation.sql`.
+
+Idempotency is enforced at the write layer by `upsert_delta_table()`
+in `table_utils.py` — Delta MERGE matches on
+`lpep_pickup_datetime + pu_location_id` and only inserts rows that
+do not already exist. Re-running the pipeline any number of times
+produces the same result.
+
+---
+
+### Delta Time Travel
+
+Full version history is maintained on all Delta tables. Any prior
+state can be queried for audit or recovery in `ad_hoc > data_validation.sql`.
+
 
 
 ## Tech Stack
