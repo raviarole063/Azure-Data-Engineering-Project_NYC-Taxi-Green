@@ -439,7 +439,7 @@ produces the same result.
 
 Full version history is maintained on all Delta tables. Any prior
 state can be queried for audit or recovery in `ad_hoc > data_validation.sql`.
-
+---
 
 
 ## Tech Stack
@@ -450,15 +450,14 @@ state can be queried for audit or recovery in `ad_hoc > data_validation.sql`.
 | Platform | Azure Databricks (Premium) |
 | Storage | ADLS Gen2 (Medallion containers) |
 | Table Format | Delta Lake |
-| Catalog | Unity Catalog |
-| Ingestion | Auto Loader (cloudFiles) |
-| Orchestration | Databricks Workflows + Azure Data Factory |
-| Security | Azure Key Vault + Service Principal + Secret Scope |
+| Catalog | Unity Catalog (Storage Credentials + External Locations) |
+| Ingestion | Auto Loader (cloudFiles + checkpoint) |
+| Orchestration | Azure Data Factory + Databricks Workflows |
+| Security | Unity Catalog Access Connectors + Azure Key Vault (SP reference) |
 | Visualisation | Power BI Desktop (DirectQuery) |
 | Version Control | GitHub (Databricks Repos) |
-| IaC | ADF ARM Template export |
-
-
+          
+---
 ## Repository Structure
 ```
 nyc-taxi-project/
