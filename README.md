@@ -152,26 +152,33 @@ nyc-taxi-project/
   └── docs/
         ├── adf-orchestration.md     ← full ADF pipeline details
         └── databricks-job.md        ← job config, params, cluster
+```
 
 ---
 
 ### Full Load vs Incremental Load
 
-Handled automatically by `get_filtered_dataframe()` in `table_utils.py`:
+Handled automatically by `get_filtered_dataframe()` in `table_utils.py`.
+No manual flags required — the function inspects the target table state
+at runtime and switches mode accordingly.
 
 | Condition | Behaviour |
 |---|---|
-| Target table does not exist or is empty | **Full load** — reads all data from source |
-| Target table has data | **Incremental** — reads only the 3-months-ago window |
+| Target table empty or does not exist | **Full load** — reads entire Bronze table |
+| Target table has data | **Incremental** — reads only the month window passed from ADF (`p_month_start` to `p_month_end`) |
 
-The 3-month delay matches the NYC TLC data release schedule. 
-`get_month_start_n_months_ago(3)` in `date_utils.py` calculates the 
-target window dynamically at runtime — no hardcoded dates.
+Both are batch operations. The distinction is only in **how much data
+is read from Bronze** on a given run:
 
-No manual flags. No if/else branching in notebooks. The utility 
-function detects the state of the target table and switches mode 
-automatically.
+- **First run** — table is empty, all available months are processed
+- **Subsequent runs** — only the months specified by ADF parameters
+  are read and merged, avoiding reprocessing historical data
 
+The month window is configurable at pipeline trigger time via
+`p_month_start` and `p_month_end`. The default delay between data
+availability and processing is adjustable in `date_utils.py` —
+`get_month_start_n_months_ago(n)` where `n` can be changed to match
+the NYC TLC release schedule.
 
 
 ## Unity Catalog — Storage Architecture
