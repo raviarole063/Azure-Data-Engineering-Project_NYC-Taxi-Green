@@ -46,7 +46,7 @@ End-to-end batch data pipeline processing NYC Green Taxi trip data using Azure D
 │  total_trips · total_revenue · avg_fare             │
 │  avg_distance · avg_passengers · max/min_fare       │
 └─────────────────────────┬───────────────────────────┘
-                          │  DirectQuery
+                          │  Import
                           ▼
                    Power BI Dashboard
 ```
@@ -105,12 +105,7 @@ green_trips_cleansed.py
   p_start_month = dbutils.widgets.get("p_start_month")  →  11
   p_end_month   = dbutils.widgets.get("p_end_month")    →  11
 
-  df_cleansed.filter(
-      (year == 2025) &
-      (month >= p_start_month) &
-      (month <= p_end_month)  &
-      (fare_amount >= 0)
-  )
+  df_cleansed.filter()
 ```
 
 ---
@@ -139,7 +134,7 @@ Track A — Green Trips          Track B — Taxi Zone Lookup
 
 ---
 
-### Full Load vs Incremental Load
+### Full Load vs Incremental Load (Batch Processing)
 
 Handled automatically by `get_filtered_dataframe()` in `table_utils.py`. No manual flags required — the function inspects the target table state at runtime and switches mode accordingly.
 
@@ -338,12 +333,6 @@ Validated in `ad_hoc/data_validation.sql`. Idempotency is enforced at the write 
 ### Delta Time Travel
 
 Full version history is maintained on all Delta tables. Any prior state can be queried for audit or recovery via `ad_hoc/data_validation.sql`.
-
-```sql
-DESCRIBE HISTORY nyctaxi.03_gold.daily_trip_summary;
-
-SELECT * FROM nyctaxi.03_gold.daily_trip_summary VERSION AS OF 1;
-```
 
 ---
 
