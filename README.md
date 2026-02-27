@@ -10,10 +10,10 @@ enforcement, dimensional modelling, and a Power BI reporting layer.
 
 **Source:** [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
 ```
-NYC TLC Public CDN  (parquet / CSV)
-         │
-         │  HTTP download via urllib / ADF Copy Activity
-         ▼
+         NYC TLC Public CDN  (parquet / CSV)
+                          │
+                          │  HTTP download via urllib / ADF Copy Activity
+                          ▼
 ┌─────────────────────────────────────────────────────┐
 │  00 · LANDING                                       │
 │  Databricks Volume / ADLS Gen2                      │
@@ -33,11 +33,11 @@ NYC TLC Public CDN  (parquet / CSV)
 │  2025 data only · fare >= 0 · disputes removed      │
 │  Decoded vendor / rate / payment columns            │
 │                                                     │
-│            green_trips_enriched                     │
+│            —  green_trips_enriched                  │
 │  Joined with taxi_zone_lookup (SCD Type-2)          │
 │  Pickup + dropoff borough and zone names added      │
 │                                                     │
-│            taxi_zone_lookup  (SCD Type-2)           │
+│          — taxi_zone_lookup  (SCD Type-2)           │
 │  Dimension table · effective_date / end_date        │
 └─────────────────────────┬───────────────────────────┘
                           │  Daily aggregation
@@ -47,11 +47,11 @@ NYC TLC Public CDN  (parquet / CSV)
 │  total_trips · total_revenue · avg_fare             │
 │  avg_distance · avg_passengers · max/min_fare       │
 └─────────────────────────┬───────────────────────────┘
-                          │  DirectQuery
+                          │  Import
                           ▼
                    Power BI Dashboard
 ```
-
+---
 ## How It Works
 
 ### Orchestration Flow
@@ -141,19 +141,10 @@ Track A — Green Trips          Track B — Taxi Zone Lookup
 ```
 ---
 
-### Option B — Separate `docs/adf-orchestration.md`
-
-Keep the main README clean and create:
-```
-nyc-taxi-project/
-  └── docs/
-        ├── adf-orchestration.md     ← full ADF pipeline details
-        └── databricks-job.md        ← job config, params, cluster
-```
 
 ---
 
-### Full Load vs Incremental Load
+### Full Load vs Incremental Load (Batch Processing)
 
 Handled automatically by `get_filtered_dataframe()` in `table_utils.py`.
 No manual flags required — the function inspects the target table state
@@ -194,7 +185,7 @@ nyctaxi (catalog)
   ├── 02_silver   — External Tables  → abfss://silver@...
   └── 03_gold     — Managed Tables   → Metastore root
 ```
----
+
 ### External vs Managed Table
 
 **Bronze and Silver → External Tables**
@@ -242,7 +233,6 @@ governance at the account level.
 An admin group was created in the Databricks account console with this
 Entra ID user added as both group member and account admin.
 
----
 
 #### Metastore Configuration
 
@@ -264,7 +254,7 @@ created with a dedicated storage path:
 With a root path configured, managed tables (Gold layer) write to this
 container automatically without specifying a path at table creation.
 
----
+
 #### Two Access Connectors — Isolation by Design
 
 <access_connector_setup.png>
@@ -293,7 +283,7 @@ it needs and nothing more.
 Both connectors were assigned **Storage Blob Data Contributor** on
 their respective containers via IAM Role Assignment in Azure Portal.
 
----
+
 #### Storage Credential & External Locations
 
 <storage_credential.png>
@@ -311,10 +301,10 @@ Storage Credential (nyctaxi-data-storage-credential)
         │  referenced by
         ▼
 External Locations
-  ├── abfss://landing@stnyctaxigreen.dfs.core.windows.net/
-  ├── abfss://bronze@stnyctaxigreen.dfs.core.windows.net/
-  ├── abfss://silver@stnyctaxigreen.dfs.core.windows.net/
-  └── abfss://gold@stnyctaxigreen.dfs.core.windows.net/
+  ├── abfss://landing@<storage-account>.dfs.core.windows.net/
+  ├── abfss://bronze@<storage-account>.dfs.core.windows.net/
+  ├── abfss://silver@<storage-account>.dfs.core.windows.net/
+  └── abfss://gold@<storage-account>.dfs.core.windows.net/
 ```
 
 **External Locations** map specific ADLS paths to the Storage
@@ -399,7 +389,7 @@ Raw Bronze contains **1,577 negative fare records** and **6 stray 2024
 records**. Without this filter, `avg_fare` and `total_revenue` in Gold
 are mathematically incorrect.
 
----
+
 
 ### Silver Layer — Enrichment
 
@@ -416,7 +406,7 @@ column name conflicts on the same lookup table. Only active zone
 records (`end_date IS NULL`) are used — ensures SCD Type-2 history
 does not create duplicate join matches.
 
----
+
 
 ### Idempotency Validation
 
@@ -430,7 +420,7 @@ in `table_utils.py` — Delta MERGE matches on
 do not already exist. Re-running the pipeline any number of times
 produces the same result.
 
----
+
 
 ### Delta Time Travel
 
@@ -471,8 +461,7 @@ nyc-taxi-project/
   ├── setup/
   │     └── create_catalog_and_schemas.sql
   ├── ad_hoc/
-  │     ├── data_validation.sql
-  │     ├── green_taxi_eda.py
-  │     └── purge_tables.py
-  └── adf/                             # ADF ARM template + pipeline JSON
+        ├── data_validation.sql
+        ├── green_taxi_eda.py
+        └── purge_tables.py
 ```
