@@ -5,7 +5,7 @@ using Azure Databricks, Delta Lake, and Unity Catalog. Implements a
 Medallion Architecture with incremental ingestion, data quality 
 enforcement, dimensional modelling, and a Power BI reporting layer.
 
-
+---
 ## Architecture
 
 **Source:** [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
