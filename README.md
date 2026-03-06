@@ -53,13 +53,19 @@ End-to-end batch data pipeline processing NYC Green Taxi trip data using Azure D
                    Power BI Dashboard
 ```
 
+<br/>
+
 ---
 
 ## How It Works
 
+
+
 ### Orchestration Flow
 
-<pipeline_overview.png>
+<img src="./images/Azure Data Factory/pipeline/1.0_pipeline_params.png"/>
+
+<br/>
 
 The pipeline accepts two parameters at runtime:
 
@@ -68,27 +74,36 @@ The pipeline accepts two parameters at runtime:
 | `p_month_start` | Integer | 5 (May) | 11 (November) |
 | `p_month_end` | Integer | 10 (October) | 11 (November) |
 
+<br/>
+
 **ADF runs three activities in sequence:**
 
+<br/>
+
 **1. Green Trips Copy Activity (ForEach)**
+
 Loops over every month integer from `p_month_start` to `p_month_end`. Each iteration constructs the NYC TLC URL dynamically using the year and zero-padded month, downloads the parquet file, and lands it in ADLS Gen2 under `/00_landing/nyctaxi_green/{yyyy-MM}/`.
 
 Passing `p_month_start=5, p_month_end=10` downloads 6 files.
 Passing `p_month_start=11, p_month_end=11` downloads one file for the incremental monthly run.
 
+<br/>
+
 **2. Taxi Zone Lookup Copy Activity**
+
 Single Copy Activity — no loop. Downloads the zone lookup CSV from the NYC TLC CDN and lands it in `/00_landing/lookup/`. Runs independently of the green trips loop.
 
+<br/>
+
 **3. Databricks Job Trigger (Web Activity)**
+
 After both Copy Activities complete, ADF calls the Databricks Jobs REST API to trigger the transformation job. The pipeline parameters `p_month_start` and `p_month_end` are forwarded as notebook parameters in the request body.
 
-<adf_web_activity_config.png>
+<br/>
 
 ---
 
 ### Parameter Flow — ADF to Databricks
-
-<adf_pipeline_params.png>
 
 The parameters travel end-to-end from the ADF trigger down to the Silver filtering logic:
 
@@ -110,11 +125,15 @@ green_trips_cleansed.py
   df_cleansed.filter()
 ```
 
+<br/>
+
 ---
 
 ### Databricks Job — Task Dependencies
 
-<databricks_job_dag.png>
+<img src="./images/Azure Databricks/3.0_Workflow Jobs/1.0_Databricks Job.png"/>
+
+<br/>
 
 The job is triggered by ADF after Copy Activities complete. Parameters `p_month_start` and `p_month_end` are passed from the ADF pipeline and received in notebooks via `dbutils.widgets`.
 
@@ -134,6 +153,8 @@ Track A — Green Trips          Track B — Taxi Zone Lookup
 04_daily_trips_summary
 ```
 
+<br/>
+
 ---
 
 ### Full Load vs Incremental Load (Batch Processing)
@@ -145,6 +166,8 @@ Handled automatically by `get_filtered_dataframe()` in `table_utils.py`. No manu
 | Target table empty or does not exist | **Full load** — reads entire Bronze table |
 | Target table has data | **Incremental** — reads only the month window passed from ADF (`p_month_start` to `p_month_end`) |
 
+<br/>
+
 Both are batch operations. The distinction is only in how much data is read from Bronze on a given run:
 
 - **First run** — table is empty, all available months are processed
@@ -152,13 +175,19 @@ Both are batch operations. The distinction is only in how much data is read from
 
 The month window is configurable at pipeline trigger time via `p_month_start` and `p_month_end`. The delay between data availability and processing is adjustable in `date_utils.py` via `get_month_start_n_months_ago(n)`.
 
+<br/>
+
 ---
 
 ## Unity Catalog — Storage Architecture
 
-<unity_catalog_storage.png>
+<img src="./images/Azure Databricks/2.0_Unity Catalog/3.0_Databricks Volume.png"/>
+
+<br/>
 
 Unity Catalog governs all data access. The catalog `nyctaxi` contains four schemas mapping directly to the Medallion layers.
+
+<br/>
 
 ### Catalog Structure
 
@@ -170,24 +199,35 @@ nyctaxi (catalog)
   └── 03_gold     — Managed Tables  → Metastore root
 ```
 
+<br/>
+
 ### External vs Managed Table Strategy
 
 **Bronze and Silver → External Tables**
+
 Data files live in ADLS Gen2 containers. Dropping a table removes the metadata only — the underlying Delta files remain safe in storage. Protects against accidental workspace or catalog deletion.
 
+<br/>
+
 **Gold → Managed Tables**
+
 Aggregated summary tables are small and easily regenerated from Silver. Databricks manages the storage path. Managed Delta tables benefit from Databricks-optimized features such as optimized writes and predictive I/O, applied automatically without manual configuration — appropriate for a frequently-queried reporting layer served to Power BI via DirectQuery.
 
+<br/>
+
 **Landing → External Volume**
+
 The landing container is written to by ADF Copy Activities. Declaring it as an External Volume means Databricks can read from it without owning it — dropping the volume removes only the catalog reference, not the raw files ADF deposited.
+
+<br/>
 
 ---
 
 ### SCD Type-2 — Taxi Zone Lookup
 
-<scd_type2_table.png>
-
 `taxi_zone_lookup` is a Slowly Changing Dimension Type-2 table. When a zone attribute changes (borough, zone name, service zone), the existing active record is expired by setting `end_date`, and a new record is inserted with a fresh `effective_date`. Active records always have `end_date IS NULL`. Enrichment joins filter on this condition to prevent duplicate join matches from historical records.
+
+<br/>
 
 ---
 
@@ -199,9 +239,13 @@ The landing container is written to by ADF Copy Activities. Declaring it as an E
 
 Azure Databricks account-level administration does not accept personal Microsoft accounts (Gmail, Outlook personal). A dedicated user was created in **Microsoft Entra ID** (formerly Azure AD) to serve as the Databricks account admin — required for Unity Catalog governance at the account level. An admin group was created in the Databricks account console with this Entra ID user added as both group member and account admin.
 
+<br/>
+
 #### Metastore Configuration
 
-<metastore_setup.png>
+<img src="./images/Azure Databricks/2.0_Unity Catalog/1.0_Metastore Configuration/3.1_New Metastore Creation.png"/>
+
+<br/>
 
 Azure creates one default metastore per region automatically, but with no managed storage path assigned. This means every catalog and managed table would require an explicit storage path at creation time.
 
@@ -213,9 +257,9 @@ For this project the default metastore was deleted and a new one created with a 
 
 With a root path configured, managed tables (Gold layer) write to this container automatically without specifying a path at table creation.
 
-#### Two Access Connectors — Isolation by Design
+<br/>
 
-<access_connector_setup.png>
+#### Two Access Connectors — Isolation by Design
 
 An **Access Connector** is an Azure-managed identity that acts as the bridge between Databricks and ADLS Gen2. Rather than using one connector for everything, two were used for isolation:
 
@@ -224,14 +268,21 @@ An **Access Connector** is an Azure-managed identity that acts as the bridge bet
 | `unity-catalog-access-connector` | Metastore | Metastore container only |
 | `nyctaxi-data-access-connector` | Storage Credential | landing, bronze, silver, gold |
 
+<br/>
+
 **Why two instead of one:**
+
 The metastore connector handles Unity Catalog system metadata — table definitions, schema information, permissions, and managed table files. The data connector handles all pipeline data movement. Separating them means data processing cannot accidentally touch metastore system files. If the data connector's permissions are misconfigured or revoked, catalog metadata remains intact. This demonstrates **Principle of Least Privilege** at the infrastructure level — each identity has access to exactly what it needs and nothing more.
 
 Both connectors were assigned **Storage Blob Data Contributor** on their respective containers via IAM Role Assignment in Azure Portal.
 
+<br/>
+
 #### Storage Credential & External Locations
 
-<storage_credential.png>
+<img src="./images/Azure Databricks/2.0_Unity Catalog/3.0_Storage Credentials.png"/>
+
+<br/>
 
 A **Storage Credential** is the Unity Catalog object that wraps an Access Connector and registers it inside Databricks. Once created, it can be referenced by External Locations and granted permissions to users and groups — all managed centrally through Unity Catalog rather than per-notebook configuration.
 
@@ -249,6 +300,8 @@ External Locations
   └── abfss://gold@<storage-account>.dfs.core.windows.net/
 ```
 
+<br/>
+
 **External Locations** map specific ADLS paths to the Storage Credential. Any notebook or job in the workspace can access these paths through Unity Catalog permissions — no credentials in code, no authentication blocks in notebooks, no Secret Scopes required.
 
 Permissions can be granted at three levels:
@@ -256,18 +309,29 @@ Permissions can be granted at three levels:
 - On individual External Locations
 - On catalogs, schemas, and tables built on top of those locations
 
-<external_locations.png>
+<br/>
+
+<img src="./images/Azure Databricks/2.0_Unity Catalog/4.0_External Locations.png"/>
+
+<br/>
 
 ---
 
 ### Alternative Pattern — Service Principal
 
-<service_principal_setup.png>
+<img src="./images/Azure Databricks/4.0_Alternative Way - Service Principal SetUp/Service Principal/4.0_Service Principal_Usage.png"/>
+
+<br/>
 
 A Service Principal authentication pattern is also implemented in the codebase as a reference, with the authentication block present but commented out in notebooks (`green_trips_raw.py`, `taxi_zone_lookup.py`).
 
+<br/>
+
 **Why Service Principal is not the primary approach:**
+
 Unity Catalog Storage Credentials with External Locations is the modern Databricks-recommended pattern. Service Principal authentication requires credentials to be fetched in every notebook at runtime, managed per-workspace, and rotated manually. It also bypasses Unity Catalog's centralised governance — access cannot be managed through catalog permissions, only through Azure IAM and Key Vault.
+
+<br/>
 
 **How it is implemented (reference):**
 
@@ -298,13 +362,15 @@ Azure Portal
 
 The Service Principal was assigned **Storage Blob Data Contributor** on the storage account. Credentials are never hardcoded — even `print(secret)` outputs `[REDACTED]` in notebook output due to Databricks secret redaction.
 
+<br/>
+
 ---
 
 ## Data Quality
 
-### Silver Layer — Filtering & Cleansing
+<br/>
 
-<data_validation_results.png>
+### Silver Layer — Filtering & Cleansing
 
 Enforced in `green_trips_cleansed.py` before writing to Silver:
 
@@ -313,7 +379,11 @@ Enforced in `green_trips_cleansed.py` before writing to Silver:
 | Late-arriving data | `year(pickup_datetime) == 2025` | Trips crossing midnight Dec 31st get bundled into January files carrying 2024 dates — invalid for 2025 reporting |
 | Negative fare amounts | `fare_amount >= 0` | Negative values represent refunds, dispute reversals, and driver entry corrections — not real commercial trips |
 
+<br/>
+
 Raw Bronze contains **1,577 negative fare records** and **6 stray 2024 records**. Without this filter, `avg_fare` and `total_revenue` in Gold are mathematically incorrect.
+
+<br/>
 
 ### Silver Layer — Enrichment
 
@@ -326,15 +396,19 @@ do_location_id (integer) → do_borough, do_zone  (e.g. Queens, Astoria)
 
 Both joins use aliased DataFrames (`pu_lookup`, `do_lookup`) to avoid column name conflicts on the same lookup table. Only active zone records (`end_date IS NULL`) are used — ensures SCD Type-2 history does not create duplicate join matches.
 
+<br/>
+
 ### Idempotency Validation
 
-<idempotency_check.png>
-
 Validated in `ad_hoc/data_validation.sql`. Idempotency is enforced at the write layer by `upsert_delta_table()` in `table_utils.py` — Delta MERGE matches on `lpep_pickup_datetime + pu_location_id` and only inserts rows that do not already exist. Re-running the pipeline any number of times produces the same result.
+
+<br/>
 
 ### Delta Time Travel
 
 Full version history is maintained on all Delta tables. Any prior state can be queried for audit or recovery via `ad_hoc/data_validation.sql`.
+
+<br/>
 
 ---
 
@@ -352,6 +426,8 @@ Full version history is maintained on all Delta tables. Any prior state can be q
 | Security | Unity Catalog Access Connectors + Azure Key Vault (SP reference) |
 | Visualisation | Power BI Desktop (DirectQuery) |
 | Version Control | GitHub (Databricks Repos) |
+
+<br/>
 
 ---
 
@@ -377,6 +453,8 @@ nyc-taxi-green-project/
   │     └── purge_tables.py
   └── README.md
 ```
+
+<br/>
 
 ---
 
