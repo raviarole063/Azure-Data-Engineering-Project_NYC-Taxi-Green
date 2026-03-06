@@ -9,6 +9,7 @@ End-to-end batch data pipeline processing NYC Green Taxi trip data using Azure D
 **Source:** [NYC TLC Trip Record Data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
 
 <img src="./images/Architecture/architecture.svg" width="2000" alt="NYC Taxi Data Engineering Architecture"/>
+<p align="center"><i>🔍 Tip: Click the image to zoom in</i></p>
 
 ```
          NYC TLC Public CDN  (parquet / CSV)
